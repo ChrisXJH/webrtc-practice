@@ -15,8 +15,8 @@
       };
 
     const db = firebase.firestore();
+
     const peerConnection = new RTCPeerConnection(RTC_CONFIGURATION);
-    const remoteStream = new MediaStream();
 
     const videoSelectElement = document.getElementById('videoInput');
     const audioSelectElement = document.getElementById('audioInput');
@@ -46,11 +46,18 @@
         };
 
         const localStream = await navigator.mediaDevices.getUserMedia(constraint);
+        const remoteStream = new MediaStream();
 
         localVideoElement.srcObject = localStream;
+        remoteVideoElement.srcObject = remoteStream;
 
         localStream.getTracks().forEach(track => {
-            peerConnection.addTrack(track, localStream)
+            peerConnection.addTrack(track, localStream);
+        });
+        peerConnection.addEventListener('track', event => {
+            event.streams[0].getTracks().forEach(track => {
+                remoteStream.addTrack(track);
+            });
         });
     };
 
@@ -111,31 +118,29 @@
     };
 
     const createRoom = async () => {
+        const roomRef =  await db.collection('rooms').doc();
+        const roomId = roomRef.id;
+
+        collectIceCandidates(roomRef, peerConnection, 'callerCandidates', 'calleeCandidates');
+
         const offer = await peerConnection.createOffer();
-
-        await peerConnection.setLocalDescription(offer);
-
-        const room = {
+        const roomWithOffer = {
             offer: {
                 type: offer.type,
                 sdp: offer.sdp
             }
         };
 
-        const roomRef = await db.collection('rooms').add(room);
-        const roomId = roomRef.id;
-
-        collectIceCandidates(roomRef, peerConnection, 'callerCandidates', 'calleeCandidates');
-
+        await peerConnection.setLocalDescription(offer);
+        await roomRef.set(roomWithOffer);
+        
         roomIdText.innerHTML = `Your room ID is <b>${roomId}</b>. Send it to your friend!`;
 
         roomRef.onSnapshot(async snapshot => {
             const data = snapshot.data();
 
             if (!peerConnection.currentRemoteDescription && data && data.answer) {
-                const { answer } = data;
-
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
             }
         });
     };
@@ -149,14 +154,14 @@
             return;
         }
 
-        collectIceCandidates(roomRef, peerConnection, 'calleeCandidates', 'callerCandidates');
-
         const { offer } = roomSnapshot.data();
 
-        peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+        collectIceCandidates(roomRef, peerConnection, 'calleeCandidates', 'callerCandidates');
+
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
 
         const answer = await peerConnection.createAnswer();
-        const roomUpdate = {
+        const roomWithAnswer = {
             answer: {
                 type: answer.type,
                 sdp: answer.sdp
@@ -164,21 +169,12 @@
         };
 
         await peerConnection.setLocalDescription(answer);
-        await roomRef.update(roomUpdate);
+        await roomRef.update(roomWithAnswer);
     };
 
     const main = async () => {
         onInputDevicesChange();
 
-        remoteVideoElement.srcObject = remoteStream;
-
-        peerConnection.addEventListener('track', event => {
-            event.streams[0].getTracks().forEach(track => {
-                console.log('Add a track to the remoteStream:', track);
-                remoteStream.addTrack(track);
-            });
-        });
-        
         [videoSelectElement, audioSelectElement].forEach(selectElement => {
             selectElement.addEventListener('change', () => {
                 requestUserMedia();
@@ -197,10 +193,6 @@
 
         createRoomBtn.addEventListener('click', () => {
             createRoom();
-        });
-
-        peerConnection.addEventListener('connectionstatechange', () => {
-            console.log('connectionState', peerConnection.connectionState);
         });
     };
 
