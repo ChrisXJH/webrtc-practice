@@ -16,6 +16,7 @@
 
     const db = firebase.firestore();
     const peerConnection = new RTCPeerConnection(RTC_CONFIGURATION);
+    const remoteStream = new MediaStream();
 
     const videoSelectElement = document.getElementById('videoInput');
     const audioSelectElement = document.getElementById('audioInput');
@@ -45,16 +46,11 @@
         };
 
         const localStream = await navigator.mediaDevices.getUserMedia(constraint);
-        const remoteStream = new MediaStream();
 
         localVideoElement.srcObject = localStream;
-        remoteVideoElement.srcObject = remoteStream;
 
         localStream.getTracks().forEach(track => {
             peerConnection.addTrack(track, localStream)
-        });
-        peerConnection.addEventListener('track', event => {
-            remoteStream.addTrack(event.track, remoteStream);
         });
     };
 
@@ -98,7 +94,6 @@
         const candidatesCollection = roomRef.collection(localName);
 
         peerConnection.addEventListener('icecandidate', event => {
-            console.log('icecandidate', event);
             if (event.candidate) {
                 const json = event.candidate.toJSON();
                 candidatesCollection.add(json);
@@ -143,12 +138,6 @@
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
             }
         });
-
-        peerConnection.addEventListener('connectionstatechange', () => {
-            if (peerConnection.connectionState === 'connected') {
-                console.log('connected');
-            }
-        });
     };
 
     const joinRoom = async roomId => {
@@ -176,17 +165,20 @@
 
         await peerConnection.setLocalDescription(answer);
         await roomRef.update(roomUpdate);
-
-        peerConnection.addEventListener('connectionstatechange', () => {
-            if (peerConnection.connectionState === 'connected') {
-                console.log('connected');
-            }
-        });
     };
 
     const main = async () => {
         onInputDevicesChange();
 
+        remoteVideoElement.srcObject = remoteStream;
+
+        peerConnection.addEventListener('track', event => {
+            event.streams[0].getTracks().forEach(track => {
+                console.log('Add a track to the remoteStream:', track);
+                remoteStream.addTrack(track);
+            });
+        });
+        
         [videoSelectElement, audioSelectElement].forEach(selectElement => {
             selectElement.addEventListener('change', () => {
                 requestUserMedia();
@@ -205,6 +197,10 @@
 
         createRoomBtn.addEventListener('click', () => {
             createRoom();
+        });
+
+        peerConnection.addEventListener('connectionstatechange', () => {
+            console.log('connectionState', peerConnection.connectionState);
         });
     };
 
